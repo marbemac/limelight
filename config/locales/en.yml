@@ -1,0 +1,30 @@
+# Sample localization file for English. Add more files in this directory for other locales.
+# See https://github.com/svenfuchs/rails-i18n/tree/master/rails%2Flocale for starting points.
+
+en:
+  unauthorized:
+    manage:
+      all: "Not authorized to %{action} %{subject}."
+      user: "Not allowed to manage other user accounts."
+    update:
+      link: "You're not allowed to update this link story."
+
+  mongoid:
+    errors:
+      models:
+        user:
+          attributes:
+            username:
+              blank: "Username cannot be blank"
+            email:
+              blank: "Email cannot be blank"
+            password:
+              blank: "Password cannot be blank"
+        talk:
+          attributes:
+            content:
+              blank: "You can't talk about nothing! Talk cannot be blank"
+        comment:
+          attributes:
+            content:
+              length: "Must be between 3 and 200 characters"

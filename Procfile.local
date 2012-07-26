@@ -1,0 +1,4 @@
+mongo:            mongod
+redis:            redis-server /usr/local/etc/redis.conf
+worker:           bundle exec rake environment resque:work QUEUE=fast,neo4j,medium,mailer,slow,popularity,feeds,images,notifications
+tweet_stream:     bundle exec rake environment tweet_stream:userstream

@@ -1,0 +1,2 @@
+MIXPANEL_TOKEN = Rails.env.production? ? '91b0d43b3a254c2639596bc6f400097c' : '8aad5ae7b1e94548677934af8dc9ec53'
+#ProjectLimelight::Application.config.middleware.use "Mixpanel::Tracker::Middleware", MIXPANEL_TOKEN

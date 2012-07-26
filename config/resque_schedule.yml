@@ -1,0 +1,46 @@
+#recalculate_popularity:
+#  every: 20m
+#  class: RecalculatePopularity
+#  args:
+#  description: "This job recalculates popularity scores"
+
+#recalculate_averages:
+#  every: 1h
+#  class: RecalculateAverages
+#  args:
+#  description: "This job recalculates popularity averages for each root type"
+
+#recalculate_clout:
+#  every: 45m
+#  class: RecalculateClout
+#  args:
+#  description: "This job recalculates user clout"
+
+#crawl_sources:
+#  every: 15m
+#  class: CrawlerGo
+#  description: "This job invokes the Limelight crawler to re-crawl all of it's sources and push posts"
+
+daily_notifications:
+  cron: "0 14 * * *"
+  class: SendDailyUserNotifications
+  args:
+  description: "This job sends users a daily email with their new notifications"
+
+#weekly_email:
+  #  cron: "0 15 * * fri"
+  #  class: WeeklyEmail
+  #  args:
+  #  description: "This job sends users a periodic content-you-might-like email"
+
+pull_tweets:
+    every: 60m
+    class: PullTweets
+    args:
+    description: "This job pulls tweets from users with a twitter handle"
+
+#recalculate_post_scores:
+#    every: 10m
+#    class: RecalculatePostScores
+#    args:
+#    description: "This job recalculates each post's master score"
