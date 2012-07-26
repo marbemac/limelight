@@ -2,69 +2,12 @@ class PostsController < ApplicationController
   before_filter :authenticate_user!, :only => [:create,:edit,:update,:destroy,:disable,:stream,:publish_share,:discard_share]
   include ModelUtilitiesHelper
 
-  respond_to :html, :json
+  respond_to :json
 
   def index
-    if params[:user_id]
-      user = User.find_by_slug_id(params[:user_id])
+    posts = PostMedia.find_by_params(params)
 
-      if params[:topic_id]
-        topic = Topic.find_by_slug_id(params[:topic_id])
-        topic_ids = Neo4j.pull_from_ids(topic.neo4j_id).to_a
-        @posts = PostMedia.where("shares.user_id" => user.id, "shares.0.topic_mention_ids" => {"$in" => topic_ids << topic.id}).limit(20)
-      else
-        if signed_in? && (user.id == current_user.id || current_user.role?("admin")) && params[:status] == 'pending'
-          @posts = PostMedia.unscoped.where("shares.user_id" => user.id, "shares.0.status" => 'pending').limit(20)
-        else
-          @posts = PostMedia.where("shares.user_id" => user.id, "shares.0.status" => "active").limit(20)
-        end
-      end
-
-    elsif params[:topic_id]
-
-      topic = Topic.find_by_slug_id(params[:topic_id])
-      topic_ids = topic ? Neo4j.pull_from_ids(topic.neo4j_id).to_a << topic.id : []
-      @posts = PostMedia.where(:topic_ids => {"$in" => topic_ids}).limit(20)
-
-    else
-
-      @posts = PostMedia.all.limit(20)
-
-      if params[:status] && params[:status] == 'pending'
-        @posts = @posts.unscoped.any_of({:status => 'pending'}, {"shares.status" => 'pending'}).desc("_id").limit(20)
-      end
-
-    end
-
-    if params[:sort] && params[:sort] == 'popularity'
-      @posts = @posts.desc("score")
-    else
-      if params[:user_id] && params[:topic_id]
-        @posts = @posts.desc("shares.0.created_at")
-      else
-        @posts = @posts.desc("created_at")
-      end
-    end
-
-    @posts = @posts.skip(20*(params[:page].to_i-1)) if params[:page]
-
-    data = @posts.map do |p|
-      response = p.to_json(:properties => :public)
-      if params[:user_id]
-        response = Yajl::Parser.parse(response)
-        response['share'] = p.get_share(user.id)
-        response['shares'] = p.shares.where('user_id' => user.id).to_a
-        response
-      elsif params[:status] && params[:status] == 'pending'
-        response = Yajl::Parser.parse(response)
-        response['shares'] = p.shares.where('status' => 'pending').to_a
-        response
-      else
-        Yajl::Parser.parse(response)
-      end
-    end
-
-    render :json => data
+    render :json => posts
   end
 
   def publish_share

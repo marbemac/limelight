@@ -105,6 +105,57 @@ class Neo4j
       Neo4j.update_affinity(user.id.to_s, topic.id.to_s, user_node, topic_node, change, true)
     end
 
+    def post_add_topic_mention(post, topic, post_node=nil, creator_node=nil, mention_node=nil, topic_nodes=nil)
+      # increase the creators affinity to these topics
+      unless post.user_id.to_s == User.limelight_user_id
+        Neo4j.update_affinity(post.user_id.to_s, topic.id.to_s, creator_node, mention_node, 1, false)
+      end
+
+      unless topic_nodes
+        topic_nodes = []
+        post.topic_mentions.each do |m|
+          if m.id != topic.id
+            node = Neo4j.neo.get_node_index('topics', 'uuid', m.id.to_s)
+            topic_nodes << {:node => node, :node_id => m.id.to_s}
+          end
+        end
+      end
+
+      # increase the mentioned topics affinity towards the other mentioned topics
+      topic_nodes.each do |t|
+        Neo4j.update_affinity(topic.id.to_s, t[:node_id], mention_node, t[:node], 1, true)
+      end
+    end
+
+    def post_remove_topic_mention(post, topic)
+      mention_node = Neo4j.neo.get_node_index('topics', 'uuid', topic.id.to_s)
+      return unless mention_node
+
+      rel1 = Neo4j.neo.get_relationship_index('posts', 'mentions', "#{post.id.to_s}-#{topic.id.to_s}")
+      return unless rel1
+
+      Neo4j.neo.delete_relationship(rel1)
+      Neo4j.neo.remove_relationship_from_index('posts', rel1)
+
+      # decrease the creators affinity to these topics
+      creator_node = Neo4j.neo.get_node_index('users', 'uuid', post.user_id.to_s)
+      Neo4j.update_affinity(post.user_id.to_s, topic.id.to_s, creator_node, mention_node, -1, false)
+
+      topic_nodes = []
+      post.topic_mentions.each do |m|
+        if m.id != topic.id
+          node = Neo4j.neo.get_node_index('topics', 'uuid', m.id.to_s)
+          topic_nodes << {:node => node, :node_id => m.id.to_s}
+        end
+      end
+
+      # decrease the mentioned topics affinity towards the other mentioned topics
+      topic_nodes.each do |t|
+        Neo4j.update_affinity(topic.id.to_s, t[:node_id], mention_node, t[:node], -1, true)
+      end
+
+    end
+
     # updates the affinity between two nodes
     def update_affinity(node1_id, node2_id, node1, node2, change=0, mutual=nil)
       affinity = self.neo.get_relationship_index('affinity', 'nodes', "#{node1_id}-#{node2_id}")
@@ -123,11 +174,6 @@ class Neo4j
 
         self.neo.set_relationship_properties(affinity, payload) if payload.length > 0
       else
-        #unless node1 && node2
-        #  node1 = self.neo.get_node_index(node1_index, 'uuid', node1_id)
-        #  node2 = self.neo.get_node_index(node2_index, 'uuid', node2_id)
-        #end
-
         affinity = self.neo.create_relationship('affinity', node1, node2)
         self.neo.set_relationship_properties(affinity, {
                 'weight' => change,
@@ -253,7 +299,7 @@ class Neo4j
 
     # get a topics pull from ids (aka the children)
     def pull_from_ids(topic_neo_id, depth=20)
-      #Rails.cache.fetch("neo4j-#{topic_neo_id}-pulling-#{depth}", :expires_in => 1.day) do
+      Rails.cache.fetch("neo4j-#{topic_neo_id}-pulling-#{depth}", :expires_in => 2.minutes) do
         query = "
           START n=node(#{topic_neo_id})
           MATCH n-[:pull*1..#{depth}]->x
@@ -267,12 +313,12 @@ class Neo4j
           end
         end
         pull_from
-      #end
+      end
     end
 
     # get the topics that pull from the given topics (aka the parents)
     def pulled_from_ids(topic_neo_id, depth=20)
-      #Rails.cache.fetch("neo4j-#{topic_neo_id}-pushing-#{depth}", :expires_in => 1.day) do
+      Rails.cache.fetch("neo4j-#{topic_neo_id}-pushing-#{depth}", :expires_in => 2.minutes) do
         query = "
           START n=node(#{topic_neo_id})
           MATCH n<-[:pull*1..#{depth}]-x
@@ -286,11 +332,11 @@ class Neo4j
           end
         end
         pull_from
-      #end
+      end
     end
 
     def user_topic_children(user_id, topic_neo_id)
-      #Rails.cache.fetch("neo4j-#{user_id}-#{topic_id}-pulling", :expires_in => 1.day) do
+      Rails.cache.fetch("neo4j-#{user_id}-#{topic_id}-pulling", :expires_in => 2.minutes) do
         query = "
           START n=node(#{topic_neo_id})
           MATCH n-[:pull]->x-[:pull*0..20]->y<-[:talking]-z
@@ -305,11 +351,11 @@ class Neo4j
           end
         end
         children_ids
-      #end
+      end
     end
 
     def user_topics(user_neo_id)
-      #Rails.cache.fetch("neo4j-#{user_id}-topics", :expires_in => 1.day) do
+      Rails.cache.fetch("neo4j-#{user_id}-topics", :expires_in => 2.minutes) do
         query = "
           START n=node(#{user_neo_id})
           MATCH n-[:talking]->x<-[:pull*0..20]-y<-[?:pull]-z
@@ -324,12 +370,12 @@ class Neo4j
           end
         end
         topic_ids
-      #end
+      end
     end
 
     # get the # of shares a user has in this topic and it's children
     def user_topic_share_count(user_id, topic_neo_id)
-      #Rails.cache.fetch("neo4j-#{user_id}-#{topic_id}-share_count", :expires_in => 1.day) do
+      Rails.cache.fetch("neo4j-#{user_id}-#{topic_id}-share_count", :expires_in => 2.minutes) do
         count = 0
         query = "
           START n=node(#{topic_neo_id})
@@ -346,7 +392,7 @@ class Neo4j
           count = ids.uniq.length
         end
         count
-      #end
+      end
     end
 
     def get_connection(con_id, topic1_id, topic2_id)

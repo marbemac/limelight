@@ -25,7 +25,7 @@ class PostMedia
   validates :description, :length => {:maximum => 1500}
 
   attr_accessible :title, :source_name, :source_url, :source_video_id, :source_title, :source_content, :embed_html, :description, :pending_images
-  attr_accessor :source_name, :source_url, :source_video_id, :source_title, :source_content, :individual_share
+  attr_accessor :source_name, :source_url, :source_video_id, :source_title, :source_content
 
   scope :active, where(:status => 'active')
   scope :pending, where(:status => 'pending')
@@ -37,7 +37,9 @@ class PostMedia
   before_destroy :disconnect
 
   index({ "shares.user_id" => 1, "shares.created_at" => -1, "shares.topic_mention_ids" => 1 })
-  index({ :topic_ids => 1, :_id => -1 })
+  index({ "shares.user_id" => 1, "shares.updated_at" => -1, "shares.topic_mention_ids" => 1 })
+  index({ :topic_ids => 1, :created_at => -1 })
+  index({ :topic_ids => 1, :updated_at => -1 })
   index({ :topic_ids => 1, :score => -1 })
 
   def to_param
@@ -285,72 +287,143 @@ class PostMedia
   # END JSON
   ##########
 
-  class << self
+  # find a topic by slug or id
+  def self.find_by_slug_id(id)
+    if Moped::BSON::ObjectId.legal?(id)
+      Topic.find(id)
+    else
+      Topic.where(:slug => id.parameterize).first
+    end
+  end
 
-    # find a topic by slug or id
-    def find_by_slug_id(id)
-      if Moped::BSON::ObjectId.legal?(id)
-        Topic.find(id)
-      else
-        Topic.where(:slug => id.parameterize).first
-      end
+  def self.create_pending(user, url, comment, created_at=Time.now, medium=nil)
+    # Use fetch_url to grab the url and find any existing posts
+    response = fetch_url(url)
+    return nil if response.nil?
+    # If there's already a post
+    if response[:existing]
+      post = response[:existing]
+    # Otherwise create a new post
+    else
+      response[:type] = response[:type] && ['Link','Picture','Video'].include?(response[:type]) ? response[:type] : 'Link'
+      params = {:source_url => response[:url],
+                :source_name => response[:provider_name],
+                :embed_html => response[:video],
+                :title => response[:title],
+                :type => response[:type],
+                :description => response[:description],
+                :pending_images => response[:images]
+      }
+      post = Kernel.const_get(response[:type]).new(params)
+      post.user_id = user.id
+      post.status = "pending"
+      post.created_at = created_at
     end
 
-    def create_pending(user, url, comment, created_at=Time.now, medium=nil)
-      # Use fetch_url to grab the url and find any existing posts
-      response = fetch_url(url)
-      return nil if response.nil?
-      # If there's already a post
-      if response[:existing]
-        post = response[:existing]
-      # Otherwise create a new post
-      else
-        response[:type] = response[:type] && ['Link','Picture','Video'].include?(response[:type]) ? response[:type] : 'Link'
-        params = {:source_url => response[:url],
-                  :source_name => response[:provider_name],
-                  :embed_html => response[:video],
-                  :title => response[:title],
-                  :type => response[:type],
-                  :description => response[:description],
-                  :pending_images => response[:images]
-        }
-        post = Kernel.const_get(response[:type]).new(params)
-        post.user_id = user.id
-        post.status = "pending"
-        post.created_at = created_at
-      end
+    if post && !post.get_share(user.id)
 
-      if post && !post.get_share(user.id)
+      share = post.add_share(user.id, comment)
+      share.status = "pending"
+      share.created_at = created_at
+      share.add_medium(medium) if medium
 
-        share = post.add_share(user.id, comment)
-        share.status = "pending"
-        share.created_at = created_at
-        share.add_medium(medium) if medium
-
-        if post.valid?
-          post.save
-        else
-          nil
-        end
+      if post.valid?
+        post.save
       else
         nil
       end
+    else
+      nil
     end
+  end
 
-    def create_pending_from_tweet(user, tweet)
-      # Grab first url from tweet if it exists
-      if tweet.urls.first
-        # Remove urls from text
-        comment = tweet.text
-        tweet.urls.each do |u|
-          comment.slice!(u.url)
+  def self.create_pending_from_tweet(user, tweet)
+    # Grab first url from tweet if it exists
+    if tweet.urls.first
+      # Remove urls from text
+      comment = tweet.text
+      tweet.urls.each do |u|
+        comment.slice!(u.url)
+      end
+      url = tweet.urls.first.expanded_url
+      medium = {:source => "Twitter", :id => tweet.id.to_i, :url => "https://twitter.com/#{user.twitter_handle}/statuses/#{tweet.id.to_i}"}
+
+      create_pending(user, url, comment, tweet.created_at, medium)
+    end
+  end
+
+  # Accepts:
+  # topic_id
+  # user_id
+  # status
+  # sort (popularity, created_at)
+  # page
+  def self.find_by_params(params)
+    if params[:user_id]
+      user = User.find_by_slug_id(params[:user_id])
+
+      if params[:topic_id]
+        topic = Topic.find_by_slug_id(params[:topic_id])
+        topic_ids = Neo4j.pull_from_ids(topic.neo4j_id).to_a
+        @posts = PostMedia.where("shares.user_id" => user.id, "shares.0.topic_mention_ids" => {"$in" => topic_ids << topic.id})
+      else
+        if signed_in? && (user.id == current_user.id || current_user.role?("admin")) && params[:status] == 'pending'
+          @posts = PostMedia.unscoped.where("shares.user_id" => user.id, "shares.0.status" => 'pending')
+        else
+          @posts = PostMedia.where("shares.user_id" => user.id, "shares.0.status" => "active")
         end
-        url = tweet.urls.first.expanded_url
-        medium = {:source => "Twitter", :id => tweet.id.to_i, :url => "https://twitter.com/#{user.twitter_handle}/statuses/#{tweet.id.to_i}"}
-
-        create_pending(user, url, comment, tweet.created_at, medium)
+      end
+    elsif params[:topic_id]
+      topic = Topic.find_by_slug_id(params[:topic_id])
+      topic_ids = topic ? Neo4j.pull_from_ids(topic.neo4j_id).to_a << topic.id : []
+      @posts = PostMedia.where(:topic_ids => {"$in" => topic_ids})
+    else
+      if params[:status] && params[:status] == 'pending'
+        @posts = PostMedia.unscoped.any_of({:status => 'pending'}, {"shares.status" => 'pending'}).desc("_id")
+      else
+        @posts = PostMedia.scoped
       end
     end
+
+    key = 'posts'
+    key += "-#{params[:user_id]}" if params[:user_id]
+    key += "-#{params[:topic_id]}" if params[:topic_id]
+    key += "-#{params[:status]}" if params[:status]
+    timestamp = @posts.only(:updated_at).desc('updated_at').first.updated_at
+    key += "-#{timestamp}"
+
+    # caching
+    data = Rails.cache.fetch(key, :expires_in => 1.day) do
+      if params[:sort] && params[:sort] == 'popularity'
+        @posts = @posts.desc("score")
+      else
+        if params[:user_id] && params[:topic_id]
+          @posts = @posts.desc("shares.0.created_at")
+        else
+          @posts = @posts.desc("created_at")
+        end
+      end
+
+      @posts = @posts.skip(20*(params[:page].to_i-1)) if params[:page]
+
+      @posts.limit(20).map do |p|
+        response = p.to_json(:properties => :public)
+        if params[:user_id]
+          response = Yajl::Parser.parse(response)
+          response['share'] = p.get_share(user.id)
+          response['shares'] = p.shares.where('user_id' => user.id).to_a
+          response
+        elsif params[:status] && params[:status] == 'pending'
+          response = Yajl::Parser.parse(response)
+          response['shares'] = p.shares.where('status' => 'pending').to_a
+          response
+        else
+          Yajl::Parser.parse(response)
+        end
+      end
+    end
+
+    data
   end
 
 end
