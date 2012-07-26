@@ -5,7 +5,7 @@ class PostsController < ApplicationController
   respond_to :json
 
   def index
-    posts = PostMedia.find_by_params(params)
+    posts = PostMedia.find_by_params(params, current_user)
 
     render :json => posts
   end

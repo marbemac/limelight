@@ -14,7 +14,7 @@ class PostShare
   embedded_in :post_media
 
   after_create :update_user_share, :neo4j_create
-  after_save :check_status
+  before_save :check_status
 
   def update_user_share
     if status == "active"
@@ -33,7 +33,7 @@ class PostShare
 
   # if the status changed from pending to active, push it out to feeds
   def check_status
-    if !status_was || status_changed?
+    if !status_was || status_was != status
       if status == 'active'
         _parent.ll_score += 1
       end

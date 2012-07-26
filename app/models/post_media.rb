@@ -357,7 +357,7 @@ class PostMedia
   # status
   # sort (popularity, created_at)
   # page
-  def self.find_by_params(params)
+  def self.find_by_params(params, current_user)
     if params[:user_id]
       user = User.find_by_slug_id(params[:user_id])
 
@@ -366,7 +366,7 @@ class PostMedia
         topic_ids = Neo4j.pull_from_ids(topic.neo4j_id).to_a
         @posts = PostMedia.where("shares.user_id" => user.id, "shares.0.topic_mention_ids" => {"$in" => topic_ids << topic.id})
       else
-        if signed_in? && (user.id == current_user.id || current_user.role?("admin")) && params[:status] == 'pending'
+        if current_user && (user.id == current_user.id || current_user.role?("admin")) && params[:status] == 'pending'
           @posts = PostMedia.unscoped.where("shares.user_id" => user.id, "shares.0.status" => 'pending')
         else
           @posts = PostMedia.where("shares.user_id" => user.id, "shares.0.status" => "active")

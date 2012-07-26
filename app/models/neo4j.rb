@@ -336,7 +336,7 @@ class Neo4j
     end
 
     def user_topic_children(user_id, topic_neo_id)
-      Rails.cache.fetch("neo4j-#{user_id}-#{topic_id}-pulling", :expires_in => 2.minutes) do
+      Rails.cache.fetch("neo4j-#{user_id}-#{topic_neo_id}-pulling", :expires_in => 2.minutes) do
         query = "
           START n=node(#{topic_neo_id})
           MATCH n-[:pull]->x-[:pull*0..20]->y<-[:talking]-z
@@ -355,7 +355,7 @@ class Neo4j
     end
 
     def user_topics(user_neo_id)
-      Rails.cache.fetch("neo4j-#{user_id}-topics", :expires_in => 2.minutes) do
+      Rails.cache.fetch("neo4j-#{user_neo_id}-topics", :expires_in => 2.minutes) do
         query = "
           START n=node(#{user_neo_id})
           MATCH n-[:talking]->x<-[:pull*0..20]-y<-[?:pull]-z
@@ -375,7 +375,7 @@ class Neo4j
 
     # get the # of shares a user has in this topic and it's children
     def user_topic_share_count(user_id, topic_neo_id)
-      Rails.cache.fetch("neo4j-#{user_id}-#{topic_id}-share_count", :expires_in => 2.minutes) do
+      Rails.cache.fetch("neo4j-#{user_id}-#{topic_neo_id}-share_count", :expires_in => 2.minutes) do
         count = 0
         query = "
           START n=node(#{topic_neo_id})
