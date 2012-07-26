@@ -13,22 +13,14 @@ class PostShare
   belongs_to :user
   embedded_in :post_media
 
-  after_create :update_user_share, :neo4j_create, :feed_post_create
+  after_create :update_user_share, :neo4j_create
   after_save :check_status
 
   def update_user_share
     if status == "active"
       user.share_count += 1
-      topic_mention_ids.each do |tid|
-        user.topic_activity_add(tid)
-      end
       user.save
     end
-  end
-
-  def feed_post_create
-    return unless status == 'active'
-    Resque.enqueue(PushPostToFeeds, _parent.id.to_s, user_id.to_s)
   end
 
   def neo4j_create
@@ -41,9 +33,9 @@ class PostShare
 
   # if the status changed from pending to active, push it out to feeds
   def check_status
-    if status_was && status_was != status
-      if status_was == 'pending' && status == 'active'
-        feed_post_create
+    if !status_was || status_changed?
+      if status == 'active'
+        _parent.ll_score += 1
       end
     end
   end

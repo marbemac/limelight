@@ -138,7 +138,6 @@ class PostMedia
     if share.valid?
 
       self.shares << share
-      self.ll_score += 1
       share.set_mentions
 
       share.topic_mention_ids.each do |t|
@@ -173,7 +172,6 @@ class PostMedia
     self.shares.where(:status => 'publishing').each do |share|
       share.status = 'active'
       share.expire_cached_json
-      share.feed_post_create
     end
   end
   # END SHARES
@@ -195,6 +193,7 @@ class PostMedia
     # remove from neo4j
     node = Neo4j.neo.get_node_index('post_media', 'uuid', id.to_s)
     Neo4j.neo.delete_node!(node)
+    Topic.where(:id => {"$in" => topic_ids}).inc(:post_count, -1)
   end
 
   def update_shares_topics
