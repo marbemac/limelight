@@ -4,7 +4,7 @@ class TopicsController < ApplicationController
   respond_to :html, :json
 
   def index
-    topics = Topic.parse_filters(Topic.all, params)
+    topics = Topic.find_by_params(Topic.scoped, params)
 
     render :json => topics
   end
@@ -35,7 +35,7 @@ class TopicsController < ApplicationController
     topic = Topic.find_by_slug_id(params[:id])
     topic_ids = Neo4j.pull_from_ids(topic.neo4j_id, params[:depth] ? params[:depth] : 1).to_a
     topics = Topic.where(:_id => {"$in" => topic_ids})
-    topics = Topic.parse_filters(topics, params)
+    topics = Topic.find_by_params(topics, params)
     render :json => topics
   end
 
@@ -43,7 +43,7 @@ class TopicsController < ApplicationController
     topic = Topic.find_by_slug_id(params[:id])
     topic_ids = Neo4j.pulled_from_ids(topic.neo4j_id, params[:depth] ? params[:depth] : 20).to_a
     topics = Topic.where(:_id => {"$in" => topic_ids})
-    topics = Topic.parse_filters(topics, params)
+    topics = Topic.find_by_params(topics, params)
     render :json => topics
   end
 end

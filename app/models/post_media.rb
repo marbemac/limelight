@@ -388,11 +388,14 @@ class PostMedia
     key += "-#{params[:user_id]}" if params[:user_id]
     key += "-#{params[:topic_id]}" if params[:topic_id]
     key += "-#{params[:status]}" if params[:status]
-    timestamp = @posts.only(:updated_at).desc('updated_at').first.updated_at
+    key += "-#{params[:page]}" if params[:page]
+    first = @posts.only(:updated_at).desc('updated_at').first
+    return [] unless first
+    timestamp = first.updated_at
     key += "-#{timestamp}"
 
     # caching
-    data = Rails.cache.fetch(key, :expires_in => 1.day) do
+    Rails.cache.fetch(key, :expires_in => 1.day) do
       if params[:sort] && params[:sort] == 'popularity'
         @posts = @posts.desc("score")
       else
@@ -421,8 +424,6 @@ class PostMedia
         end
       end
     end
-
-    data
   end
 
 end

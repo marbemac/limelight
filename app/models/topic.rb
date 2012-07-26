@@ -494,100 +494,99 @@ class Topic
     :websites => { :definition => :all_websites, :properties => :public, :versions => [ :v1 ] },
     :freebase_url => { :properties => :public, :versions => [ :v1 ] }
 
-  class << self
-
-    def json_images(model)
-      {
-        :ratio => model.image_ratio,
-        :w => model.image_width,
-        :h => model.image_height,
-        :original => model.image_url(nil, nil, nil, true),
-        :fit => {
-          :large => model.image_url(:fit, :large),
-          :normal => model.image_url(:fit, :normal),
-          :small => model.image_url(:fit, :small)
-        },
-        :square => {
-          :large => model.image_url(:square, :large),
-          :normal => model.image_url(:square, :normal),
-          :small => model.image_url(:square, :small)
-        }
+  def self.json_images(model)
+    {
+      :ratio => model.image_ratio,
+      :w => model.image_width,
+      :h => model.image_height,
+      :original => model.image_url(nil, nil, nil, true),
+      :fit => {
+        :large => model.image_url(:fit, :large),
+        :normal => model.image_url(:fit, :normal),
+        :small => model.image_url(:fit, :small)
+      },
+      :square => {
+        :large => model.image_url(:square, :large),
+        :normal => model.image_url(:square, :normal),
+        :small => model.image_url(:square, :small)
       }
+    }
+  end
+
+  ##########
+  # END JSON
+  ##########
+
+  # find a topic by slug or id
+  def self.find_by_slug_id(id)
+    if Moped::BSON::ObjectId.legal?(id)
+      Topic.find(id)
+    else
+      Topic.where(:slug_pretty => id.parameterize).first
     end
+  end
 
-    ##########
-    # END JSON
-    ##########
+  # search or create topics given an array of names
+  def self.search_or_create(topic_mention_names, user)
+    new_topics = []
+    if topic_mention_names.is_a?(Array)
+      # See if any of the new topic slugs are already in the DB. Check through topic aliases! Only connect to topics without a type assigned.
+      new_topic_mentions = topic_mention_names.map {|name| [name, name.parameterize]}
 
-    # find a topic by slug or id
-    def find_by_slug_id(id)
-      if Moped::BSON::ObjectId.legal?(id)
-        Topic.find(id)
-      else
-        Topic.where(:slug_pretty => id.parameterize).first
-      end
-    end
+      topic_slugs = new_topic_mentions.map {|data| data[1]}
+      # topics with matching aliases that are NOT already typed and are not categories
+      topics = Topic.any_of({"aliases.slug" => {'$in' => topic_slugs}, "primary_type_id" => {"$exists" => false}}, {"aliases.slug" => {'$in' => topic_slugs}, :is_category => true}).to_a
 
-    # search or create topics given an array of names
-    def search_or_create(topic_mention_names, user)
-      new_topics = []
-      if topic_mention_names.is_a?(Array)
-        # See if any of the new topic slugs are already in the DB. Check through topic aliases! Only connect to topics without a type assigned.
-        new_topic_mentions = topic_mention_names.map {|name| [name, name.parameterize]}
+      new_topic_mentions.each do |topic_mention|
+        next unless topic_mention[1].length > 2
 
-        topic_slugs = new_topic_mentions.map {|data| data[1]}
-        # topics with matching aliases that are NOT already typed and are not categories
-        topics = Topic.any_of({"aliases.slug" => {'$in' => topic_slugs}, "primary_type_id" => {"$exists" => false}}, {"aliases.slug" => {'$in' => topic_slugs}, :is_category => true}).to_a
-
-        new_topic_mentions.each do |topic_mention|
-          next unless topic_mention[1].length > 2
-
-          found_topic = false
-          # Do we already have an *untyped* DB topic for this mention?
-          topics.each do |topic|
-            if topic.get_alias(topic_mention[1])
-              found_topic = topic
-            end
+        found_topic = false
+        # Do we already have an *untyped* DB topic for this mention?
+        topics.each do |topic|
+          if topic.get_alias(topic_mention[1])
+            found_topic = topic
           end
-          unless found_topic
-            # If we did not find the topic, create it and save it if it is valid
-            found_topic = user.topics.build({name: topic_mention[0]})
-            if found_topic.valid?
-              found_topic.save
-            else
-              found_topic = false
-            end
-          end
-
-          new_topics << found_topic if found_topic
         end
+        unless found_topic
+          # If we did not find the topic, create it and save it if it is valid
+          found_topic = user.topics.build({name: topic_mention[0]})
+          if found_topic.valid?
+            found_topic.save
+          else
+            found_topic = false
+          end
+        end
+
+        new_topics << found_topic if found_topic
       end
-      new_topics
+    end
+    new_topics
+  end
+
+  # takes a hash of filters to narrow down a topic query
+  def self.find_by_params(topics, params)
+    unless params[:sort]
+      topics = topics.asc(:slug)
     end
 
-    # takes a hash of filters to narrow down a topic query
-    def parse_filters(topics, filters)
-      unless filters[:sort]
-        topics = topics.asc(:slug)
-      end
+    topics = topics.skip(100 * (params[:page].to_i-1)) if params[:page]
 
-      if filters[:limit] && filters[:limit].to_i < 100
-        topics = topics.limit(filters[:limit])
-      else
-        topics = topics.limit(100)
+    if params[:type]
+      if params[:type] == 'category'
+        topics = topics.where(:is_category => true)
       end
+    end
 
-      if filters[:page]
-        topics = topics.skip(filters[:limit].to_i * (filters[:page].to_i-1))
-      end
+    key = 'topics'
+    key += "-#{params[:type]}" if params[:type]
+    key += "-#{params[:page]}" if params[:page]
+    first = topics.only(:updated_at).desc('updated_at').first
+    return [] unless first
+    timestamp = first.updated_at
+    key += "-#{timestamp}"
 
-      if filters[:type]
-        if filters[:type] == 'category'
-          topics = topics.where(:is_category => true)
-        end
-      end
-
-      if filters[:sort] && filters[:sort] == 'popularity'
+    Rails.cache.fetch(key, :expires_in => 1.day) do
+      if params[:sort] && params[:sort] == 'popularity'
         topics = topics.map do |t|
           topic_ids = Neo4j.pull_from_ids(t.neo4j_id).to_a
           shares = PostMedia.where(:topic_ids => {"$in" => topic_ids << t.id})
@@ -600,108 +599,105 @@ class Topic
       else
         topics = topics.map {|t| {:topic => t.as_json(:properties => :public)}}
       end
-
-      topics
     end
+  end
 
-    # Checks if there is an untyped topic with an alias equal to the name. If so, returns that topic, if not, returns new topic
-    def find_untyped_or_create(name, user)
-      alias_topic = Topic.where("aliases.slug" => name.parameterize, "primary_type_id" => {"$exists" => false}).first
-      if alias_topic
-        alias_topic
-      else
-        user.topics.create({name: name})
+  # Checks if there is an untyped topic with an alias equal to the name. If so, returns that topic, if not, returns new topic
+  def self.find_untyped_or_create(name, user)
+    alias_topic = Topic.where("aliases.slug" => name.parameterize, "primary_type_id" => {"$exists" => false}).first
+    if alias_topic
+      alias_topic
+    else
+      user.topics.create({name: name})
+    end
+  end
+
+  # clean and get all word combinations in a string
+  def self.combinalities(string)
+    return [] unless string && !string.blank?
+
+    # generate the word combinations in the tweet (to find topics based on) and remove short words
+    words = (string.split - Topic.stop_words).join(' ').gsub('-', ' ').downcase.gsub("'s", '').gsub(/[^a-z0-9 ]/, '').split.select { |w| w.length > 2 || w.match(/[0-9]/) }.join(' ')
+    words = words.split(" ")
+    #singular_words = words.map{|w| w.singularize}
+    #words = singular_words
+    combinaties = []
+    i=0
+    while i <= words.length-1
+      combinaties << words[i].downcase
+      unless i == words.length-1
+        words[(i+1)..(words.length-1)].each{|volgend_element|
+          combinaties<<(combinaties.last.dup<<" #{volgend_element}")
+        }
+      end
+      i+=1
+    end
+    combinaties
+  end
+
+  # use alchemy api and limelight to produce topic suggestions for a given url
+  def self.suggestions_by_url(url, title=nil, limit=5)
+    suggestions = []
+
+    if title
+      combinations = Topic.combinalities(title)
+      topics = Topic.where("aliases.slug" => {"$in" => combinations.map{|c| c.parameterize}}).desc(:response_count)
+      topics.each do |t|
+        suggestions << { :id => t.id.to_s, :name => t.name }
       end
     end
 
-    # clean and get all word combinations in a string
-    def combinalities(string)
-      return [] unless string && !string.blank?
+    postData = Net::HTTP.post_form(
+            URI.parse("http://access.alchemyapi.com/calls/url/URLGetRankedNamedEntities"),
+            {
+                    :url => url,
+                    :apikey => '1deee8afa82d7ba26ce5c5c7ceda960691f7e1b8',
+                    :outputMode => 'json',
+                    #:sourceText => 'cleaned',
+                    :maxRetrieve => 10
+            }
+    )
 
-      # generate the word combinations in the tweet (to find topics based on) and remove short words
-      words = (string.split - Topic.stop_words).join(' ').gsub('-', ' ').downcase.gsub("'s", '').gsub(/[^a-z0-9 ]/, '').split.select { |w| w.length > 2 || w.match(/[0-9]/) }.join(' ')
-      words = words.split(" ")
-      #singular_words = words.map{|w| w.singularize}
-      #words = singular_words
-      combinaties = []
-      i=0
-      while i <= words.length-1
-        combinaties << words[i].downcase
-        unless i == words.length-1
-          words[(i+1)..(words.length-1)].each{|volgend_element|
-            combinaties<<(combinaties.last.dup<<" #{volgend_element}")
-          }
-        end
-        i+=1
-      end
-      combinaties
-    end
+    entities = JSON.parse(postData.body)['entities']
 
-    # use alchemy api and limelight to produce topic suggestions for a given url
-    def suggestions_by_url(url, title=nil, limit=5)
-      suggestions = []
+    if entities
+      entities.each do |e|
+        if e['relevance'].to_f >= 0.60
 
-      if title
-        combinations = Topic.combinalities(title)
-        topics = Topic.where("aliases.slug" => {"$in" => combinations.map{|c| c.parameterize}}).desc(:response_count)
-        topics.each do |t|
-          suggestions << { :id => t.id.to_s, :name => t.name }
-        end
-      end
+          # try to find the topic in Limelight
+          if e['disambiguated'] && (e['disambiguated']['freebase'] || e['relevance'].to_f >= 0.80)
 
-      postData = Net::HTTP.post_form(
-              URI.parse("http://access.alchemyapi.com/calls/url/URLGetRankedNamedEntities"),
-              {
-                      :url => url,
-                      :apikey => '1deee8afa82d7ba26ce5c5c7ceda960691f7e1b8',
-                      :outputMode => 'json',
-                      #:sourceText => 'cleaned',
-                      :maxRetrieve => 10
-              }
-      )
+            topic = false
 
-      entities = JSON.parse(postData.body)['entities']
+            if e['disambiguated']['freebase']
+              topic = Topic.where(:freebase_guid => e['disambiguated']['freebase'].split('.').last).first
 
-      if entities
-        entities.each do |e|
-          if e['relevance'].to_f >= 0.60
-
-            # try to find the topic in Limelight
-            if e['disambiguated'] && (e['disambiguated']['freebase'] || e['relevance'].to_f >= 0.80)
-
-              topic = false
-
-              if e['disambiguated']['freebase']
-                topic = Topic.where(:freebase_guid => e['disambiguated']['freebase'].split('.').last).first
-
-                # didn't find the topic with the freebase guid, check names
-                unless topic
-                  topic = Topic.where("aliases.slug" => e['disambiguated']['name'].parameterize, :primary_type_id => {'$exists' => true}).desc(:response_count).first
-                  topic.freebase_guid = e['disambiguated']['freebase'].split('.').last if topic
-                end
+              # didn't find the topic with the freebase guid, check names
+              unless topic
+                topic = Topic.where("aliases.slug" => e['disambiguated']['name'].parameterize, :primary_type_id => {'$exists' => true}).desc(:response_count).first
+                topic.freebase_guid = e['disambiguated']['freebase'].split('.').last if topic
               end
+            end
 
-              if topic
-                suggestions << { :id => topic.id.to_s, :name => topic.name }
-              else
-                suggestions << { :id => 0, :name => e['disambiguated']['name'] }
-              end
+            if topic
+              suggestions << { :id => topic.id.to_s, :name => topic.name }
+            else
+              suggestions << { :id => 0, :name => e['disambiguated']['name'] }
             end
           end
         end
       end
-
-      suggestions.uniq! {|s| s[:name] }
-      suggestions[0..limit]
     end
 
-    def topics_for_connection
-      categories = Topic.where(:is_category => true)
-      neo_ids = categories.map{|t| t.neo4j_id}.join(",")
-      connected_ids = Neo4j.pull_from_ids(neo_ids)
-      where(:_id => {"$nin" => connected_ids}, :is_category => false)
-    end
+    suggestions.uniq! {|s| s[:name] }
+    suggestions[0..limit]
+  end
 
+  def self.topics_for_connection
+    categories = Topic.where(:is_category => true)
+    neo_ids = categories.map{|t| t.neo4j_id}.join(",")
+    connected_ids = Neo4j.pull_from_ids(neo_ids)
+    where(:_id => {"$nin" => connected_ids}, :is_category => false)
   end
 
   protected
